@@ -331,4 +331,4 @@ function DelayScan(Grid::SpacetimeGrid, w0, λ0, P, fwhm, Ionrate, delrange::Tup
             plt.gcf()
 end
 =#
-
+end
