@@ -278,7 +278,6 @@ end
     Grid::SpacetimeGrid
     Mask::Array{ComplexF64, 2}
     E::Array{nT, 3}
-    p::Propagator
     rate::Any
 end
 """
@@ -293,36 +292,33 @@ Constructs a `Scan` for running autocorrelation delay scans using `Scan`(...)
 - `w0::Float64` : Beam waist.
 - `f::Float64` : f-number of the focusing optics.
 - `Θ::Float64` : Angle under which the beam propagates.
-- `Grid::SpacetimeGrid` : Grid that defines the time and space of interest
+- `Grid::SpacetimeGrid` : Grid that defines the time and space of interest. Use Grid() to create a grid.
 - `Mask::Array{size Grid[x,y]}` : Mask that will be applied to the beam at position -f.
                                   The mask should have the same size has the x,y space in the Grid. The mask will simply be
                                   multiplied to the signal.
-- `Propagator p::Propagator` : The Propagator that will be used to propagate the electric field E. 
-                               To create a Propagator use the "Propagator" function. 
 - `rate::Ionrate` : Ionisation rate calulated with the LUNA/Ionisation ionrate_fun function. 
                     (e.g ppt = Ionisation.ionrate_fun!_PPTcached(:He, λ0))
 
 """
  function CreateScan(λ0::Float64, PeakP:: Float64,  fwhm::Float64, w0::Float64, f::Float64, 
-    θ::Float64, Grid::SpacetimeGrid, Mask::Array{ComplexF64, 2}, 
-    p::Propagator, rate)
+    θ::Float64, Grid::SpacetimeGrid, Mask::Array{ComplexF64, 2}, rate)
     E = Efoc(Grid, w0, λ0, PeakP, fwhm, θ)
     Emask = ApplyMask(Grid, E, Mask, f, p)
-    Scan(λ0, PeakP,  fwhm, w0, f, θ, Grid, Mask, Emask, p, rate)
+    Scan(λ0, PeakP,  fwhm, w0, f, θ, Grid, Mask, Emask, rate)
 end
 
 function (dscan::Scan)(DRange::Tuple{Float64, Float64}, dsteps::Int64, dmask::Array{ComplexF64, 2}, fpath, fname, )
     E = copy(dscan.E)
+    p = Propagator(dscan.Grid, E, dscan.w0, dscan.λ0)
     start, stop = DRange
     delay = collect(range(start, stop, dsteps))
     IonMap = zeros(length(delay))
     k = 1
     for i ∈ delay
         dscan.E = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
-        dscan.E = ApplyMask(dscan.Grid, dscan.E, dmask, dscan.f, dscan.p)
+        dscan.E = ApplyMask(dscan.Grid, dscan.E, dmask, dscan.f, p)
         dscan.E += E
         IonMap[k] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.E))
-        #push!(IonMap, Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.E)))
         println("Step $k from $dsteps")
         k += 1
     end
