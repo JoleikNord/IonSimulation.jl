@@ -1,6 +1,6 @@
 module IonSimulation
 #__precompile__()
-import Luna: PhysData, Maths, Ionisation, Tools
+import Luna: PhysData, Maths, Ionisation, Tools, Logging
 import PyPlot: plt, pygui
 import FFTW
 using Plots
@@ -10,7 +10,7 @@ using HDF5
 using Dates
 ################# Creating a grid modeled after the Luna free grid module ######################
 abstract type SpacetimeGrid end
-struct Grid <: SpacetimeGrid
+struct RealGrid <: SpacetimeGrid
     x::Vector{Float64}
     Nx::Int64
     δx::Float64
@@ -27,7 +27,7 @@ struct Grid <: SpacetimeGrid
     xywin::Array{Float64, 3}                      # Not used for now
 end
 
-function FreeGrid(Rx, Nx, Ry, Ny, δt, Nt; window_factor=0.1)
+function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
     Rxw = Rx * (1 + window_factor)
     Ryw = Ry * (1 + window_factor)
 
@@ -41,11 +41,51 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, Nt; window_factor=0.1)
     y = @. (ny-Ny/2) * δy
     ky = 2π*FFTW.fftfreq(Ny, 1/δy)
 
-    nt = collect(range(0, length = Nt))
-    t = @. (nt-Nt/2) * δt
-    ω = Maths.fftfreq(t)
+    f_lims = PhysData.c./λ_lims
+    Logging.@info ("Freq limits %.2f - %.2f PHz", f_lims[2]*1e-15, f_lims[1]*1e-15)
+    δto = min(1/(6*maximum(f_lims)), δt) # 6x maximum freq, or user-defined if finer
+    samples = 2^(ceil(Int, log2(trange/δto))) # samples for fine grid (power of 2)
+    trange_even = δto*samples # keep frequency window fixed, expand time window as necessary
+    Logging.@info ("Samples needed: %.2f, samples: %d, δt = %.2f as",
+                            trange/δto, samples, δto*1e18)
+    Logging.@info ("Requested time window: %.1f fs, actual time window: %.1f fs", trange*1e15, trange_even*1e15)
+    δωo = 2π/trange_even
+    Nto = collect(range(0, length=samples))
+    to = @. (Nto-samples/2)*δto # centre on 0
+    Nωo = collect(range(0, length=Int(samples/2 +1)))
+    ωo = Nωo*δωo
 
-    kz = zeros((Nt, Nx, Nx))
+    ωmin = 2π*minimum(f_lims)
+    ωmax = 2π*maximum(f_lims)
+    ωmax_win = 1.1*ωmax
+    cropidx = findfirst(x -> x>ωmax_win, ωo)
+    cropidx = 2^(ceil(Int, log2(cropidx))) + 1 # make coarse grid power of 2 as well
+    ω = ωo[1:cropidx]
+    δt = π/maximum(ω)
+    tsamples = (cropidx-1)*2
+    Nt = collect(range(0, length=tsamples))
+    t = @. (Nt-tsamples/2)*δt
+
+    # Make apodisation windows
+    ωwindow = Maths.planck_taper(ω, ωmin/2, ωmin, ωmax, ωmax_win) 
+
+    twindow = Maths.planck_taper(t, minimum(t), -trange/2, trange/2, maximum(t))
+    towindow = Maths.planck_taper(to, minimum(to), -trange/2, trange/2, maximum(to))
+
+    # Indices to select real frequencies (for dispersion relation)
+    sidx = (ω .> ωmin/2) .& (ω .< ωmax_win)
+
+    @assert δt/δto ≈ length(to)/length(t)
+    @assert δt/δto ≈ maximum(ωo)/maximum(ω)
+
+    #Logging.@info @sprintf("Grid: samples %d / %d, ωmax %.2e / %.2e",
+    #                       length(t), length(to), maximum(ω), maximum(ωo))
+
+    #nt = collect(range(0, length = Nt))
+    #t = @. (nt-Nt/2) * δt
+    #ω = Maths.fftfreq(t)
+
+    kz = zeros((tsamples, Nx, Nx))
     for (xidx, kxi) in enumerate(kx)
         for (yidx, kyi) in enumerate(ky)
             for (ωidx, ωi) in enumerate(ω)
@@ -64,17 +104,17 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, Nt; window_factor=0.1)
     xywin = reshape(xwin, (1, length(xwin))) .* reshape(xwin, (1, 1, length(xwin)))
 
 
-    Grid(x, Nx, δx, y, Ny, δy, kx, ky, t, δt, ω, kz, r, xywin);
+    RealGrid(x, Nx, δx, y, Ny, δy, kx, ky, t, δt, ω, kz, r, xywin);
 end
 
-Grid(R, N, δT, NT) = FreeGrid(R, N, R, N, δT, NT)
+FreeGrid(R, N, δt, trange, λ_lims) = FreeGrid(R, N, R, N, δt, trange, λ_lims)
 
 ######################## Creating gausbeam #################################
 
 """
     Efoc(Grid, w0, λ0, P, fwhm; τ=0, θ=0)
 
-X,Y-electric field in focus for time frame given by the grid size. 
+x,y-electric field in focus for time frame given by the grid size. 
 
 # Arguments
 - `Grid::SpacetimeGrid` : Grid that defines the time and space of interest
@@ -85,7 +125,7 @@ X,Y-electric field in focus for time frame given by the grid size.
 - `τ::Real` : Delay of the beam to time 0. The center of the gaussian pulse is moved by -τ
 - `θ::Real` : Angle of propagation of the beam. θ defines the wavefront tilt.
 """
-function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ)
+function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ, ϕs)
     ω0 = PhysData.wlfreq(λ0)
     I = 2 * P / (π * w0^2)
     A0 = Tools.intensity_to_field(I) 
@@ -94,7 +134,7 @@ function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ)
         for (yidx, yi) in enumerate(Grid.y)
             for (tidx, ti) in enumerate(Grid.t)
                 gausbeam =  exp(-(xi^2 + yi^2) / w0^2) * exp(1im * sin(θ * pi/180) * xi * (ω0 / PhysData.c))
-                gauspulse =  Maths.gauss(ti.-τ; fwhm = fwhm) * exp(1im * ω0 * (ti.-τ))
+                gauspulse =  @. Maths.gauss(ti.-τ; fwhm = fwhm) * exp(1im * ω0 .* (ti.-τ) )
                 Efield[tidx, xidx, yidx] = @. A0 * gauspulse * gausbeam 
             end
         end
@@ -103,10 +143,13 @@ function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ)
 end
 
 function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, θ)
-    Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, 0, θ)
+    Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, 0, θ, 0)
 end
 function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm)
-    Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, 0,0)    
+    Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, 0,0,0)    
+end
+function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ)
+    Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm, τ, θ, 0)    
 end
 
 ##################### Propagating the pulse ###########################
@@ -276,9 +319,10 @@ end
     f::Float64
     θ::Float64
     Grid::SpacetimeGrid
-    Mask::Array{ComplexF64, 2}
-    E::Array{nT, 3}
+    Eorigin::Array{nT, 3}
+    Edelay::Array{nT, 3}
     rate::Any
+    p::Propagator
 end
 """
     CreateScan(λ0, PeakP,  fwhm, w0, f, θ, Grid, Mask, p::Propagator, rate)
@@ -301,24 +345,158 @@ Constructs a `Scan` for running autocorrelation delay scans using `Scan`(...)
 
 """
  function CreateScan(λ0::Float64, PeakP:: Float64,  fwhm::Float64, w0::Float64, f::Float64, 
-    θ::Float64, Grid::SpacetimeGrid, Mask::Array{ComplexF64, 2}, rate)
-    E = Efoc(Grid, w0, λ0, PeakP, fwhm, θ)
-    Emask = ApplyMask(Grid, E, Mask, f, p)
-    Scan(λ0, PeakP,  fwhm, w0, f, θ, Grid, Mask, Emask, rate)
+    θ::Float64, Grid::SpacetimeGrid, rate)
+    Eorigin = Efoc(Grid, w0, λ0, PeakP, fwhm, θ)
+    Edelay = copy(Eorigin)
+    p = Propagator(Grid, Eorigin, w0, λ0)
+    Scan(λ0, PeakP, fwhm, w0, f, θ, Grid, Eorigin, Edelay, rate, p)
 end
 
-function (dscan::Scan)(DRange::Tuple{Float64, Float64}, dsteps::Int64, dmask::Array{ComplexF64, 2}, fpath, fname, )
-    E = copy(dscan.E)
-    p = Propagator(dscan.Grid, E, dscan.w0, dscan.λ0)
-    start, stop = DRange
+function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+    start, stop = drange
     delay = collect(range(start, stop, dsteps))
+    start, stop = zrange
+    z = collect(range(start, stop, zsteps))
     IonMap = zeros(length(delay))
     k = 1
     for i ∈ delay
-        dscan.E = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
-        dscan.E = ApplyMask(dscan.Grid, dscan.E, dmask, dscan.f, p)
-        dscan.E += E
-        IonMap[k] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.E))
+        IonMapdummy = zeros(length(z))
+        dscan.Edelay = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
+        if !isempty(InnerMask)
+            dscan.Edelay = ApplyMask(dscan.Grid, dscan.Edelay, InnerMask, dscan.f, dscan.p)
+        end
+        if !isempty(OuterMask)
+            dscan.Eorigin = ApplyMask(dscan.Grid, dscan.Eorigin, OuterMask, dscan.f, dscan.p)
+        end
+        l = 1
+        for j ∈ z    
+            dscan.Edelay = dscan.p(dscan.Edelay, j)
+            dscan.Eorigin = dscan.p(dscan.Eorigin, j)
+            dscan.Edelay += dscan.Eorigin
+            IonMapdummy[l] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay))
+            println("Step $l| $k from $zsteps | $dsteps")
+            l += 1
+        end
+        IonMap[k] = Statistics.mean(IonMapdummy)
+        k += 1
+    end
+    date = Dates.format(now(), "yyyy-mm-dd")
+    folpath = mkpath(joinpath(fpath, date))
+    filename = fname*"_"* Dates.format(now(), "HH-MM-SS") * ".h5"
+    filepath = joinpath(folpath, filename) 
+    if !isfile(filepath)
+        HDF5.h5open(filepath, "w") do file
+            create_group(file, "data")
+            create_group(file, "params")
+            f = file["data"]
+            g = file["params"]
+            #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
+            f["Ionisation_Fraction"] = IonMap
+            f["delay"] = delay 
+            parnames = ["λ", "PeakP", "fwhm", "w0", "f", "θ", "τ", "zrange", "InMask", "OutMask"]
+            parvalues = [dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, delay, z, InnerMask, OuterMask]
+            for (key, values) in zip(parnames, parvalues)
+                g[key] = values 
+            end
+            
+        end
+    end
+    
+end
+function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String,)
+    start, stop = drange
+    delay = collect(range(start, stop, dsteps))
+    start, stop = zrange
+    z = collect(range(start, stop, zsteps))
+    IonMap = zeros(length(delay))
+    k = 1
+    for i ∈ delay
+        IonMapdummy = zeros(length(z))
+        dscan.Edelay = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
+        l = 1
+        for j ∈ z    
+            dscan.Edelay = dscan.p(dscan.Edelay, j)
+            dscan.Eorigin = dscan.p(dscan.Eorigin, j)
+            dscan.Edelay += dscan.Eorigin
+            IonMapdummy[l] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay))
+            println("Step $l| $k from $zsteps | $dsteps")
+            l += 1
+        end
+        IonMap[k] = Statistics.mean(IonMapdummy)
+        k += 1
+    end
+    date = Dates.format(now(), "yyyy-mm-dd")
+    folpath = mkpath(joinpath(fpath, date))
+    filename = fname*"_"* Dates.format(now(), "HH-MM-SS") * ".h5"
+    filepath = joinpath(folpath, filename) 
+    if !isfile(filepath)
+        HDF5.h5open(filepath, "w") do file
+            create_group(file, "data")
+            create_group(file, "params")
+            f = file["data"]
+            g = file["params"]
+            #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
+            f["Ionisation_Fraction"] = IonMap
+            f["delay"] = delay 
+            parnames = ["λ", "PeakP", "fwhm", "w0", "f", "θ", "τ","zrange"]
+            parvalues = [dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, delay, z]
+            for (key, values) in zip(parnames, parvalues)
+                g[key] = values 
+            end
+            
+        end
+    end
+    
+end
+function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+    start, stop = drange
+    delay = collect(range(start, stop, dsteps))
+    IonMap = zeros(length(delay))   
+    k = 1
+    for i ∈ delay
+        dscan.Edelay = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
+        if !isempty(InnerMask)
+            dscan.Edelay = ApplyMask(dscan.Grid, dscan.Edelay, InnerMask, dscan.f, dscan.p)
+        end
+        if !isempty(OuterMask)
+            dscan.Eorigin = ApplyMask(dscan.Grid, dscan.Eorigin, OuterMask, dscan.f, dscan.p)
+        end
+        dscan.Edelay += dscan.Eorigin
+        IonMap[k] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay))
+        println("Step $k from $dsteps")
+        k += 1
+    end
+    date = Dates.format(now(), "yyyy-mm-dd")
+    folpath = mkpath(joinpath(fpath, date))
+    filename = fname*"_"* Dates.format(now(), "HH-MM-SS") * ".h5"
+    filepath = joinpath(folpath, filename) 
+    if !isfile(filepath)
+        HDF5.h5open(filepath, "w") do file
+            create_group(file, "data")
+            create_group(file, "params")
+            f = file["data"]
+            g = file["params"]
+            #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
+            f["Ionisation_Fraction"] = IonMap
+            f["delay"] = delay 
+            parnames = ["λ", "PeakP", "fwhm", "w0", "f", "θ", "τ", "InMask","OutMask"]
+            parvalues = [dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, delay, InnerMask, OuterMask]
+            for (key, values) in zip(parnames, parvalues)
+                g[key] = values 
+            end
+            
+        end
+    end
+end
+function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, fpath::String, fname::String)
+    start, stop = drange
+    delay = collect(range(start, stop, dsteps))
+    IonMap = zeros(length(delay))   
+    k = 1
+    for i ∈ delay
+        dscan.Edelay = Efoc(dscan.Grid, dscan.w0, dscan.λ, dscan.PeakP, dscan.fwhm, i, dscan.θ)
+        dscan.Edelay += dscan.Eorigin
+        IonMap[k] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay))
         println("Step $k from $dsteps")
         k += 1
     end
@@ -336,15 +514,13 @@ function (dscan::Scan)(DRange::Tuple{Float64, Float64}, dsteps::Int64, dmask::Ar
             f["Ionisation_Fraction"] = IonMap
             f["delay"] = delay 
             parnames = ["λ", "PeakP", "fwhm", "w0", "f", "θ", "τ"]
-            parvalues = [dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, dscan.τ]
+            parvalues = [dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, delay]
             for (key, values) in zip(parnames, parvalues)
                 g[key] = values 
             end
             
         end
     end
-
 end
 end
-
 
