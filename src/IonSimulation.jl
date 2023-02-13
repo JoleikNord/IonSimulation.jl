@@ -27,7 +27,7 @@ struct RealGrid <: SpacetimeGrid
     xywin::Array{Float64, 3}                      # Not used for now
 end
 
-function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
+function FreeGrid(Rx, Nx, Ry, Ny, δt, Nt; window_factor=0.1)
     Rxw = Rx * (1 + window_factor)
     Ryw = Ry * (1 + window_factor)
 
@@ -41,7 +41,7 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
     y = @. (ny-Ny/2) * δy
     ky = 2π*FFTW.fftfreq(Ny, 1/δy)
 
-    f_lims = PhysData.c./λ_lims
+    #=f_lims = PhysData.c./λ_lims
     Logging.@info ("Freq limits %.2f - %.2f PHz", f_lims[2]*1e-15, f_lims[1]*1e-15)
     δto = min(1/(6*maximum(f_lims)), δt) # 6x maximum freq, or user-defined if finer
     samples = 2^(ceil(Int, log2(trange/δto))) # samples for fine grid (power of 2)
@@ -65,7 +65,7 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
     tsamples = (cropidx-1)*2
     Nt = collect(range(0, length=tsamples))
     t = @. (Nt-tsamples/2)*δt
-
+    
     # Make apodisation windows
     ωwindow = Maths.planck_taper(ω, ωmin/2, ωmin, ωmax, ωmax_win) 
 
@@ -80,12 +80,12 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
 
     #Logging.@info @sprintf("Grid: samples %d / %d, ωmax %.2e / %.2e",
     #                       length(t), length(to), maximum(ω), maximum(ωo))
+    =#
+    nt = collect(range(0, length = Nt))
+    t = @. (nt-Nt/2) * δt
+    ω = Maths.fftfreq(t)
 
-    #nt = collect(range(0, length = Nt))
-    #t = @. (nt-Nt/2) * δt
-    #ω = Maths.fftfreq(t)
-
-    kz = zeros((tsamples, Nx, Nx))
+    kz = zeros((Nt, Nx, Nx))
     for (xidx, kxi) in enumerate(kx)
         for (yidx, kyi) in enumerate(ky)
             for (ωidx, ωi) in enumerate(ω)
@@ -107,7 +107,7 @@ function FreeGrid(Rx, Nx, Ry, Ny, δt, trange, λ_lims; window_factor=0.1)
     RealGrid(x, Nx, δx, y, Ny, δy, kx, ky, t, δt, ω, kz, r, xywin);
 end
 
-FreeGrid(R, N, δt, trange, λ_lims) = FreeGrid(R, N, R, N, δt, trange, λ_lims)
+FreeGrid(R, N, δt, Nt) = FreeGrid(R, N, R, N, δt, Nt)
 
 ######################## Creating gausbeam #################################
 
