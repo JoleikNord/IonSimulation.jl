@@ -143,9 +143,9 @@ function Efoc(Grid::SpacetimeGrid, w0, λ0, P, fwhm; τ = 0, θ = 0, ϕ = [])
         end
     end
     if !isempty(ϕ)
-        Eω = FFTW.fftshift(FFTW.fft(Efield))
+        Eω = FFTW.fftshift(FFTW.fft(Efield, 1), 1)
         Eωshift = Fields.prop_taylor!(Eω, Grid.ω, ϕ, λ0)
-        Eshift = FFTW.ifft(FFTW.ifftshift(Eωshift))
+        Eshift = FFTW.ifft(FFTW.ifftshift(Eωshift, 1), 1)
         Eshift
     else
         Efield
@@ -208,14 +208,16 @@ Adds a delay `τ` and/or a phase `ϕ` to the field.
 """
 
 function (field::Efield)(; τ = 0, ϕ = [])
-    mul!(field.Emod ,field.FT, field.E)
+    mul!(field.Emod , field.FT, field.E)
     if τ !== 0
         field.Emod .*= exp.(1im * field.grid.ω * τ)
     end
     if !isnothing(ϕ)
-        Fields.prop_taylor!(field.Emod, FFTW.fftshift(field.grid.ω), ϕ, field.λ0)
+        field.Emod .= FFTW.fftshift(field.Emod)
+        Fields.prop_taylor!(field.Emod, field.grid.ω, ϕ, field.λ0)
+        field.Emod .= FFTW.ifftshift(field.Emod)
     end 
-    field.E .=field.FT \ field.Emod
+    field.E .= field.FT \ field.Emod
 end
 ##################### Propagating the pulse ###########################
 struct Propagator{nT, ftT}
@@ -301,22 +303,28 @@ Creates a mask that can be applyed to block part of a beam.
 - `OuterRadius::Float64` : Outer radius of the mask in m. 
 - `InnerRadius::Float64` : Inner radius of the mask in m.
 """
-function MakeMask(Grid::SpacetimeGrid, OutR::Float64, InR::Float64)
-    Mask = ones(ComplexF64, (Grid.Nx, Grid.Ny))
-    for xi ∈ 1:Grid.Nx
-        for yi ∈ 1:Grid.Ny
-            if (float(xi) * Grid.δx - (Grid.Nx * Grid.δx / 2) - Grid.δx)^2 + (float(yi) * Grid.δy - (Grid.Ny * Grid.δy / 2) - Grid.δy)^2 <= OutR^2 &&
-               (float(xi) * Grid.δx - (Grid.Nx * Grid.δx / 2) - Grid.δx)^2 + (float(yi) * Grid.δy - (Grid.Ny * Grid.δy / 2) - Grid.δy)^2 >= InR^2
+function MakeMask(grid::SpacetimeGrid, OutR::Float64, InR::Float64; plotim = false)
+    Mask = ones(ComplexF64, (grid.Nx, grid.Ny))
+    for xi ∈ 1:grid.Nx
+        for yi ∈ 1:grid.Ny
+            rsquare = ((xi - grid.Nx÷2 - 1) * grid.δx)^2 + ((yi - grid.Ny÷2 - 1) * grid.δy)^2
+            if rsquare <= OutR^2 &&
+               rsquare >= InR^2
                 Mask[xi, yi] = 0              # Checks for each element in the x-y array of the grid if the distance of the element
                                               # to the center of the array is larger than the outer and smaller than the inner radius
                                               # and if not sets the mask value to 0. Otherwise the value becomes 1.
             end
         end
     end
+    if plotim
+        plt.figure()
+        plt.pcolormesh(grid.x, grid.y, abs2.(Mask))
+        plt.colorbar()
+    end
     Mask;
 end
 """
-    ApplyMask!(E, Mask, f, p::Propagator)
+    ApplyMask(E, Mask, f, p::Propagator)
 
 Applys the given mask to an electric field.
 
@@ -328,13 +336,13 @@ Applys the given mask to an electric field.
 - `Propagator p::Propagator` : The Propagator that will be used to propagate the electric field E. To create a Propagator use the "Propagator" function.     
 - `Plot Imagae::Boolean` : If true will plot an image of the beam right after the masked has been applyed. Usefull to check the mask size.                
 """
-function ApplyMask(Grid::SpacetimeGrid, E, Mask, f, p::Propagator, plotim = false)
+function ApplyMask(grid::SpacetimeGrid, E, Mask, f, p::Propagator; plotim = false)
     Em = p(E, -f)
     for i ∈ 1:size(E, 1)
         Em[i, :, :] .*= Mask
     end
     if plotim == true
-        PlotPulse(Grid, Em)
+        PlotPulse(grid, Em)
     end
     E = p(Em, f);
 end
@@ -354,7 +362,7 @@ Creates a 4-D propagation cube with Nz electric field slices in zrange.
 """
 function PropCube(p::Propagator, E, zrange::Tuple{Float64, Float64}, Nz::Int64)
     start, stop = zrange
-    PropCube =zeros(ComplexF64, (Nz, size(E)[1], size(E)[2], size(E)[3]))
+    PropCube = zeros(ComplexF64, (Nz, size(E)[1], size(E)[2], size(E)[3]))
     for i in collect(range(0; length = Nz - 1))
         PropCube[i+1, :, :, :] = p(E, start + ((stop - start) / Nz) * i)
         print("Step $i of $Nz \n")
@@ -362,11 +370,16 @@ function PropCube(p::Propagator, E, zrange::Tuple{Float64, Float64}, Nz::Int64)
     PropCube;
 end
 ## Plotting and animation functions --------------------------------------------
-function PlotPulse(Grid::SpacetimeGrid, E) 
+function PlotPulse(grid::SpacetimeGrid, E; t = 0) 
+    if t !== 0
+        ti = t
+    else
+        ti = length(grid.t)÷2
+    end
+
     plt.figure()
-    plt.pcolormesh(Grid.x, Grid.y, abs2.(E[1, :, :]))
+    plt.pcolormesh(grid.x, grid.y, abs2.(E[ti, :, :]))
     plt.colorbar()
-    plt.gcf()
 end
 
  function Animate(Grid::SpacetimeGrid, Ecube, fps, fname::String)
@@ -379,7 +392,7 @@ end
    gif(anim_dummy, fname * ".gif", fps = fps)
 end
 ##
-mutable struct Scan{}
+struct Scan{}
     λ::Float64
     PeakP::Float64
     fwhm::Float64
@@ -417,7 +430,7 @@ Constructs a `Scan` for running autocorrelation delay scans.
     θ::Float64, ϕ::Array{Float64}, Grid::SpacetimeGrid, rate)
     Eorigin = Efield(Grid, w0, λ0, PeakP, fwhm, θ = θ)
     Eorigin(ϕ = ϕ)
-    Edelay = Eorigin
+    Edelay = deepcopy(Eorigin)
     p = Propagator(Grid, Eorigin.E, w0, λ0)
     Scan(λ0, PeakP, fwhm, w0, f, θ, ϕ, Grid, Eorigin, Edelay, rate, p)
 end
@@ -438,38 +451,43 @@ Arguments
 If the arguments `zrange` and `zsteps` arent given the scan will be run only in the focus. 
 Likewise if the arguments `mask_in` and `mask_out` aren't given the scan will be run with the full beam as signal and delay.
 """
-function (dscan::Scan)(δτ::Float64, τsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+    τsteps = round(Int, 2τrange/δτ)
     if  iseven(τsteps)
-        τrange = τsteps÷2
-        delay = collect(range(start = -τrange, stop = τrange , length = τsteps + 1))
+        delay = collect(range(start = -τrange, stop = τrange, length = τsteps + 1))
     else
-        τrange = (τsteps-1)÷2
-        delay = collect(range(start = -τrange * δτ, stop = τrange * δτ, length = τsteps))
+        delay = collect(range(start = -τrange, stop = τrange, length = τsteps))
     end
 
     start, stop = zrange
     z = collect(range(start, stop, zsteps))
     IonMap = zeros(length(delay))
     k = 1
+    if !isempty(InnerMask)
+        dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
+    end
+    if !isempty(OuterMask)
+        dscan.Eorigin.E .= ApplyMask(dscan.Grid, dscan.Eorigin.E, OuterMask, dscan.f, dscan.p)
+    end
+    Eori_fund = deepcopy(dscan.Eorigin.E)
+    Edel_fund = deepcopy(dscan.Edelay.E)
     for i ∈ delay
+        dscan.Edelay.E .= Edel_fund
+        dscan.Eorigin.E .= Eori_fund
         IonMapdummy = zeros(length(z))
         dscan.Edelay(τ = i)
-        if !isempty(InnerMask)
-            dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
-        end
-        if !isempty(OuterMask)
-            dscan.Eorigin.E .= ApplyMask(dscan.Grid, dscan.Eorigin.E, OuterMask, dscan.f, dscan.p)
-        end
+        Edel_foc = deepcopy(dscan.Edelay.E)
         l = 1
-        for j ∈ z    
+        for j ∈ z   
             dscan.Edelay.E .= dscan.p(dscan.Edelay.E, j)
             dscan.Eorigin.E .= dscan.p(dscan.Eorigin.E, j)
             dscan.Edelay.E .+= dscan.Eorigin.E
             IonMapdummy[l] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay.E))
             println("Step $l| $k from $zsteps | $τsteps")
             l += 1
+            dscan.Edelay.E .= deepcopy(Edel_foc)
+            dscan.Eorigin.E .= deepcopy(Eori_fund)
         end
-        dscan.Edelay = dscan.Eorigin
         IonMap[k] = Statistics.mean(IonMapdummy)
         k += 1
     end
