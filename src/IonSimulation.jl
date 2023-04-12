@@ -210,7 +210,7 @@ Adds a delay `τ` and/or a phase `ϕ` to the field.
 function (field::Efield)(; τ = 0, ϕ = [])
     mul!(field.Emod , field.FT, field.E)
     if τ !== 0
-        field.Emod .*= exp.(-1im * field.grid.ω * τ)
+        field.Emod .*= exp.(-1im * FFTW.fftshift(field.grid.ω) * τ)
     end
     if !isnothing(ϕ)
         field.Emod .= FFTW.fftshift(field.Emod)
@@ -512,7 +512,7 @@ function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, F
             
         end
     end
-    
+    delay, IonMap
 end
 function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String,)
     start, stop = drange
