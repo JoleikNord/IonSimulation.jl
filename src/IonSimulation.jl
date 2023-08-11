@@ -451,7 +451,7 @@ Arguments
 If the arguments `zrange` and `zsteps` arent given the scan will be run only in the focus. 
 Likewise if the arguments `mask_in` and `mask_out` aren't given the scan will be run with the full beam as signal and delay.
 """
-function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+function (dscan::Scan)(τrange::Float64, δτ::Float64, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
     τsteps = round(Int, 2τrange/δτ)
     if  iseven(τsteps)
         delay = collect(range(start = -τrange, stop = τrange, length = τsteps + 1))
@@ -532,7 +532,7 @@ end
 function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
     start, stop = zrange
     z = collect(range(start, stop, zsteps))
-    IonMap = zeros((length(delay)))
+    IonMap = zeros((length(delayset)))
     k = 1
     if !isempty(InnerMask)
         dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
@@ -542,7 +542,7 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     end
     Eori_fund = deepcopy(dscan.Eorigin.E)
     Edel_fund = deepcopy(dscan.Edelay.E)
-    for i ∈ delay
+    for i ∈ delayset
         dscan.Edelay.E .= Edel_fund
         dscan.Eorigin.E .= Eori_fund
         IonMapdummy = zeros(length(z))
@@ -574,16 +574,16 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             g = file["params"]
             #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
             f["Ionisation_Fraction"] = IonMap
-            f["delay"] = delay 
+            f["delay"] = delayset 
             parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "θ", "ϕ", "τ", "zrange", "InMask", "OutMask"]
-            parvalues = [dscan.Eorigin.E, dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, dscan.ϕ, delay, z, InnerMask, OuterMask]
+            parvalues = [dscan.Eorigin.E, dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, dscan.ϕ, delayset, z, InnerMask, OuterMask]
             for (key, values) in zip(parnames, parvalues)
                 g[key] = values 
             end
             
         end
     end
-    delay, IonMap
+    delayset, IonMap
 end
 #=
 function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String,)
