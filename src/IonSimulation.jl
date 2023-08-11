@@ -210,7 +210,7 @@ Adds a delay `τ` and/or a phase `ϕ` to the field.
 function (field::Efield)(; τ = 0, ϕ = [])
     mul!(field.Emod , field.FT, field.E)
     if τ !== 0
-        field.Emod .*= exp.(-1im * FFTW.fftshift(field.grid.ω) * τ)
+        field.Emod .*= exp.(1im * FFTW.fftshift(field.grid.ω) * τ)
     end
     if !isnothing(ϕ)
         field.Emod .= FFTW.fftshift(field.Emod)
@@ -461,7 +461,7 @@ function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, F
 
     start, stop = zrange
     z = collect(range(start, stop, zsteps))
-    IonMap = zeros(length(delay))
+    IonMap = zeros((length(delay)))
     k = 1
     if !isempty(InnerMask)
         dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
@@ -488,7 +488,7 @@ function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, F
             dscan.Edelay.E .= deepcopy(Edel_foc)
             dscan.Eorigin.E .= deepcopy(Eori_fund)
         end
-        IonMap[k] = IonMapdummy
+        IonMap[k] = Statistics.mean(IonMapdummy)
         k += 1
     end
     date = Dates.format(now(), "yyyy-mm-dd")
@@ -514,6 +514,78 @@ function (dscan::Scan)(δτ::Float64, τrange::Float64, zrange::Tuple{Float64, F
     end
     delay, IonMap
 end
+
+
+
+# Rewrite this function so it can be used in paralell usin multiple cores. It is supposed to be compatible with the "scan" function in luna.
+
+function create_delayset(τrange, δτ)
+    τsteps = round(Int, 2τrange/δτ)
+    if  iseven(τsteps)
+        delay = collect(range(start = -τrange, stop = τrange, length = τsteps + 1))
+    else
+        delay = collect(range(start = -τrange, stop = τrange, length = τsteps))
+    end
+end
+
+
+function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 2}, OuterMask::Array{ComplexF64, 2}, fpath::String, fname::String)
+    start, stop = zrange
+    z = collect(range(start, stop, zsteps))
+    IonMap = zeros((length(delay)))
+    k = 1
+    if !isempty(InnerMask)
+        dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
+    end
+    if !isempty(OuterMask)
+        dscan.Eorigin.E .= ApplyMask(dscan.Grid, dscan.Eorigin.E, OuterMask, dscan.f, dscan.p)
+    end
+    Eori_fund = deepcopy(dscan.Eorigin.E)
+    Edel_fund = deepcopy(dscan.Edelay.E)
+    for i ∈ delay
+        dscan.Edelay.E .= Edel_fund
+        dscan.Eorigin.E .= Eori_fund
+        IonMapdummy = zeros(length(z))
+        dscan.Edelay(τ = i)
+        Edel_foc = deepcopy(dscan.Edelay.E)
+        l = 1
+        for j ∈ z   
+            dscan.Edelay.E .= dscan.p(dscan.Edelay.E, j)
+            dscan.Eorigin.E .= dscan.p(dscan.Eorigin.E, j)
+            dscan.Edelay.E .+= dscan.Eorigin.E
+            IonMapdummy[l] = Statistics.mean(Ionfrac(dscan.Grid, dscan.rate, dscan.Edelay.E))
+            println("Step $l| $k from $zsteps | $τsteps")
+            l += 1
+            dscan.Edelay.E .= deepcopy(Edel_foc)
+            dscan.Eorigin.E .= deepcopy(Eori_fund)
+        end
+        IonMap[k] = Statistics.mean(IonMapdummy)
+        k += 1
+    end
+    date = Dates.format(now(), "yyyy-mm-dd")
+    folpath = mkpath(joinpath(fpath, date))
+    filename = fname*"_"* Dates.format(now(), "HH-MM-SS") * ".h5"
+    filepath = joinpath(folpath, filename) 
+    if !isfile(filepath)
+        HDF5.h5open(filepath, "w") do file
+            create_group(file, "data")
+            create_group(file, "params")
+            f = file["data"]
+            g = file["params"]
+            #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
+            f["Ionisation_Fraction"] = IonMap
+            f["delay"] = delay 
+            parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "θ", "ϕ", "τ", "zrange", "InMask", "OutMask"]
+            parvalues = [dscan.Eorigin.E, dscan.λ, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.θ, dscan.ϕ, delay, z, InnerMask, OuterMask]
+            for (key, values) in zip(parnames, parvalues)
+                g[key] = values 
+            end
+            
+        end
+    end
+    delay, IonMap
+end
+#=
 function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String,)
     start, stop = drange
     delay = collect(range(start, stop, dsteps))
@@ -633,5 +705,8 @@ function (dscan::Scan)(drange::Tuple{Float64, Float64}, dsteps::Int64, fpath::St
         end
     end
 end
+These have to be rewritten
+
+=#
 end
 
