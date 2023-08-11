@@ -534,6 +534,7 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     z = collect(range(start, stop, zsteps))
     IonMap = zeros((length(delayset)))
     k = 1
+    τsteps = length(delayset)
     if !isempty(InnerMask)
         dscan.Edelay.E .= ApplyMask(dscan.Grid, dscan.Edelay.E, InnerMask, dscan.f, dscan.p)
     end
