@@ -7,8 +7,8 @@ import Statistics
 import LinearAlgebra: mul!, ldiv!, inv
 using HDF5
 using Dates
-import Hankel
-import SpecialFunctions: besselj, gamma
+#import Hankel
+#import SpecialFunctions: besselj, gamma
 
 pygui(true)
 
@@ -29,7 +29,7 @@ end
 function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
     #Rxw = Rx * (1 + window_factor)
     #Ryw = Ry * (1 + window_factor)
-    q = Hankel.QDHT(0, R, Nr; dim =2)
+    q = Luna.Hankel.QDHT(0, R, Nr; dim =2)
     δr = R/Nr
     nR = collect(range(0, length=Nr))
     r = q.r
