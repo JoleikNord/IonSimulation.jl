@@ -10,8 +10,6 @@ using Dates
 #import Hankel
 #import SpecialFunctions: besselj, gamma
 
-pygui(true)
-
 
 abstract type SpacetimeGrid end
 struct RealGrid <: SpacetimeGrid
