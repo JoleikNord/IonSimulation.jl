@@ -1,4 +1,5 @@
 module IonSimulation
+__precompile__()
 import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields
 import PyPlot: plt, pygui
 import FFTW
