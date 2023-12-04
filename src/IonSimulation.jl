@@ -8,10 +8,8 @@ import Statistics
 import LinearAlgebra: mul!, ldiv!, inv
 using HDF5
 using Dates
-#import Hankel
-#import SpecialFunctions: besselj, gamma
 
-pygui(true)
+
 
 
 abstract type SpacetimeGrid end
