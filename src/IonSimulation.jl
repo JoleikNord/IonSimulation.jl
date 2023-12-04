@@ -1,6 +1,7 @@
 module IonSimulation
 __precompile__()
 import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields, Hankel
+import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields, Hankel
 import PyPlot: plt, pygui
 import FFTW
 using Plots
