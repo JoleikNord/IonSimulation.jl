@@ -9,9 +9,6 @@ import LinearAlgebra: mul!, ldiv!, inv
 using HDF5
 using Dates
 
-
-
-
 abstract type SpacetimeGrid end
 struct RealGrid <: SpacetimeGrid
     R::Float64
