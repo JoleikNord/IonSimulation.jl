@@ -1,6 +1,6 @@
 module IonSimulation
 __precompile__()
-import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields
+import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields, Hankel
 import PyPlot: plt, pygui
 import FFTW
 using Plots
@@ -30,7 +30,7 @@ end
 function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
     #Rxw = Rx * (1 + window_factor)
     #Ryw = Ry * (1 + window_factor)
-    q = Luna.Hankel.QDHT(0, R, Nr; dim =2)
+    q = Hankel.QDHT(0, R, Nr; dim =2)
     δr = R/Nr
     nR = collect(range(0, length=Nr))
     r = q.r
