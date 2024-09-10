@@ -1,7 +1,4 @@
-module IonSimulation
-#__precompile__()
-#using Luna
-import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields, Hankel
+import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields
 import PyPlot: plt, pygui
 import FFTW
 using Plots
@@ -9,6 +6,11 @@ import Statistics
 import LinearAlgebra: mul!, ldiv!, inv
 using HDF5
 using Dates
+import Hankel
+import SpecialFunctions: besselj, gamma
+
+pygui(true)
+
 
 abstract type SpacetimeGrid end
 struct RealGrid <: SpacetimeGrid
@@ -26,7 +28,7 @@ end
 function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
     #Rxw = Rx * (1 + window_factor)
     #Ryw = Ry * (1 + window_factor)
-    q = Hankel.QDHT(0, R, Nr; dim =2)
+    q = Hankel.QDHT(0, R, Nr) # dim=2
     δr = R/Nr
     nR = collect(range(0, length=Nr))
     r = q.r
@@ -40,7 +42,7 @@ function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
     kz = zeros((Nt, Nr))
     for (ridx, kri) in enumerate(kr)
         for (ωidx, ωi) in enumerate(ω)
-            kzsq = (ωi^2 / PhysData.c^2) - kri^2 # calculte kz^2 for each value in k-space
+            kzsq = ωi^2 / PhysData.c^2 - kri^2 # calculte kz^2 for each value in k-space
             if kzsq > 0 # No imaginary k vectors 
                 kz[ωidx, ridx] = sqrt(kzsq) #calculates kz form kz^2
             end
@@ -50,7 +52,7 @@ function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
 end
 mutable struct Efield{nT, ffT}
     E::Array{nT, 2}
-    Emod::Array{ComplexF64, 2}
+    Emod::Array{ComplexF64, 1}
     FT::ffT
     grid::SpacetimeGrid
     λ0::Float64
@@ -71,10 +73,10 @@ function create_efield(r::Vector{Float64}, grid::SpacetimeGrid, w0, λ0, P, fwhm
             
         end
     end
-    linop = @. 1im*(-grid.kz - grid.ω / PhysData.c)
+    linop = @. -1im*(grid.kz - grid.ω / PhysData.c)
     zR = π*w0^2 / λ0
     fft = FFTW.plan_fft(E, 1; flags)
-    Emod = similar(E)
+    Emod = similar(E[1, :])
     Efield(E, Emod, fft, grid, λ0, linop, zR)
 end
 
@@ -83,14 +85,18 @@ function create_efield(grid::SpacetimeGrid, w0, λ0, P, fwhm)
 end
 
 function transform_Efield!(field::Efield; backtransform = false)
-    
+    for i in 1:size(field.E)[1]
+       if backtransform
+            ldiv!(field.Emod, field.grid.q, field.E[i, :])
+            field.E[i, :] = field.Emod
+        else
+            mul!(field.Emod, field.grid.q, field.E[i, :])
+            field.E[i, :] = field.Emod
+        end
+    end
     if backtransform
-        ldiv!(field.Emod, field.grid.q, field.E)
-        field.E = field.Emod
         field.E .= field.FT \ field.E
     else
-        mul!(field.Emod, field.grid.q, field.E)
-        field.E = field.Emod
         field.E .= field.FT * field.E
     end
 end
@@ -122,6 +128,7 @@ function propagate(field::Efield, z::Float64)
 end
 
 
+##
 
 ############### Ionisation calculation #######################
 """
@@ -137,12 +144,12 @@ Calculates the fraction of ionisation induced by an electric field.
                                                also works for propagation cubes.
 """
 function Ionfrac(field::Efield, rate; NumberDensity = 2.5e25, electron_charge = -1.6e-19)
-    ppt_ionfrac = similar(field.E[1, :])
-    for i in eachindex(ppt_ionfrac)
-            ppt_ionfrac[i] = Ionisation.ionfrac(rate, real(field.E[:, i]), field.grid.δt)[end]
+    rate_ionfrac = similar(field.E[1, :])
+    for i in eachindex(rate_ionfrac)
+            rate_ionfrac[i] = Ionisation.ionfrac(rate, real(field.E[:, i]), field.grid.δt)[end]
     end
-    Ne_dz = 2*pi*abs(sum(ppt_ionfrac .* field.grid.δr .* field.grid.r))*NumberDensity*electron_charge
-    ppt_ionfrac, Ne_dz
+    Ne_dz = 2*pi*abs(sum(rate_ionfrac .* field.grid.δr .* field.grid.r))*NumberDensity*electron_charge
+    rate_ionfrac, Ne_dz
 end
 
 
@@ -189,7 +196,7 @@ Applys the given mask to an electric field.
 - `Propagator p::Propagator` : The Propagator that will be used to propagate the electric field E. To create a Propagator use the "Propagator" function.     
 - `plotim::Boolean` : If true will plot an image of the beam right after the masked has been applyed. Usefull to check the mask size.                
 """
-function ApplyMask(field::Efield, Mask, f; M2 = 1, plotim = false)
+function ApplyMask(field::Efield, Mask, f; plotim = false)
     #θ = M2 * λ0 / (π * w0)
     #beamdia = 2*f *tan(θ + w0)
     #beamratio = beamdia / w0
@@ -365,4 +372,5 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     end
     delayset, IonMap
 end
-end
+
+
