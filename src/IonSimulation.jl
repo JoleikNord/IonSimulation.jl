@@ -7,7 +7,7 @@ import LinearAlgebra: mul!, ldiv!, inv
 using HDF5
 using Dates
 import Hankel
-import SpecialFunctions: besselj, gamma
+import SpecialFunctions: besselj, gamma, erf
 
 pygui(true)
 
@@ -37,7 +37,7 @@ function FreePolarGrid(R, Nr, δt, Nt; window_factor=0.1)
     kr = q.k
     nt = collect(range(0, length = Nt))
     t = @. (nt-Nt/2) * δt
-    ω = Maths.fftfreq(t)
+    ω = FFTW.fftshift(Maths.fftfreq(t))
 
     kz = zeros((Nt, Nr))
     for (ridx, kri) in enumerate(kr)
@@ -67,8 +67,8 @@ function create_efield(r::Vector{Float64}, grid::SpacetimeGrid, w0, λ0, P, fwhm
     E = zeros(ComplexF64, (size(grid.t)[1], grid.Nr))
     for (ridx, ri) in enumerate(r)
         for (tidx, ti) in enumerate(grid.t)
-            gausbeam =  exp(-(ri^2) / w0^2) * exp(1im  * (ω0 / PhysData.c))
-            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm) * exp(1im * ω0 .* ti)
+            gausbeam =  exp(-(ri^2) / w0^2) #* exp(1im  * (ω0 / PhysData.c))
+            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm) * exp(1im * ω0 .* ti) # fix FWHM duration from field to power
             E[tidx, ridx] = @. A0 * gauspulse * gausbeam 
             
         end
@@ -79,11 +79,9 @@ function create_efield(r::Vector{Float64}, grid::SpacetimeGrid, w0, λ0, P, fwhm
     Emod = similar(E[1, :])
     Efield(E, Emod, fft, grid, λ0, linop, zR)
 end
-
 function create_efield(grid::SpacetimeGrid, w0, λ0, P, fwhm)
     create_efield(grid.r, grid, w0, λ0, P, fwhm)
 end
-
 function transform_Efield!(field::Efield; backtransform = false)
     for i in 1:size(field.E)[1]
        if backtransform
@@ -102,7 +100,6 @@ function transform_Efield!(field::Efield; backtransform = false)
 end
 
 
-
 function (field::Efield)(; τ = 0, ϕ = [])
     transform_Efield!(field)
     if τ !== 0
@@ -115,13 +112,11 @@ function (field::Efield)(; τ = 0, ϕ = [])
     end 
     transform_Efield!(field; backtransform = true)
 end
-
 """
     (p::Propagator)(E, z)
-
 Propagets the field `E` by the distance `z`.
 """
-function propagate(field::Efield, z::Float64)
+function propagate(field::Efield, z::Number)
     transform_Efield!(field)
     @. field.E *= exp(field.linop*z)*exp(-1im*atan(z/field.zR)) 
     transform_Efield!(field, backtransform = true)                                                 #Inverse Fourier-transform
@@ -196,19 +191,102 @@ Applys the given mask to an electric field.
 - `Propagator p::Propagator` : The Propagator that will be used to propagate the electric field E. To create a Propagator use the "Propagator" function.     
 - `plotim::Boolean` : If true will plot an image of the beam right after the masked has been applyed. Usefull to check the mask size.                
 """
-function ApplyMask(field::Efield, Mask, f; plotim = false)
-    #θ = M2 * λ0 / (π * w0)
-    #beamdia = 2*f *tan(θ + w0)
-    #beamratio = beamdia / w0
-    #farfield_grid = FreePolarGrid(field.grid.R * beamratio, length(field.grid.r) * ceil(beamratio), 1e-15, 512)
+function ApplyMask(field::Efield,  b, f; n = 1, plotim = false)
+    delayfield = deepcopy(field)
+    if plotim == true
+        fig, (ax1, ax12, ax13, ax2, ax22, ax23) = plt.subplots(3,2)
+    end
     field.E = propagate(field, -f)
+    delayfield.E = propagate(delayfield, -f)
+
+    Er = dropdims(sum(abs.(field.E); dims=1); dims=1)
+    Er_sum = similar(Er)
+    for i in collect(range(1, length(Er)))
+        Er_sum[i] = sum(Er[1:i])
+    end
+    wzidx = argmin(abs.(Er .- b * maximum(Er)))
+    radius = field.grid.r[wzidx]
+    InnerMask = MakeMask(field.grid.r, radius, 0.0)
+    OuterMask = MakeMask(field.grid.r, field.grid.R, radius)
+
+    if plotim == true
+        Ir = dropdims(sum(abs.(field.E); dims=1); dims=1)
+        Ir ./= maximum(Ir)
+
+        ax1.plot(field.grid.r.*1e4, Ir, label = "Radial Electric Field")
+        ax1.plot(field.grid.r.*1e4, InnerMask, label = "Inner Mask")
+        ax1.plot(field.grid.r.*1e4, OuterMask, label = "Outer Mask")
+        #ax1.axvline(wz)
+        ax1.set_xlabel("r [mm]")
+        ax1.set_ylabel("Normalised electric-field strength")
+        ax1.set_title("Fundamental-Beam")
+        ax1.legend() 
+
+        ax2.plot(field.grid.r.*1e4, Ir, label = "Radial Electric Field")
+        ax2.plot(field.grid.r.*1e4, InnerMask, label = "Inner Mask")
+        ax2.plot(field.grid.r.*1e4, OuterMask, label = "Outer Mask")
+        ax2.set_xlabel("r [mm]")
+        ax2.set_ylabel("Normalised electric-field strength")
+        ax2.set_title("Delay-Beam")
+        ax2.legend()
+             
+    end
     for i ∈ 1:size(field.E, 1)
-        field.E[i, :] .*= Mask
+        field.E[i, :] .*= OuterMask
+    end
+    for i ∈ 1:size(delayfield.E, 1)
+        delayfield.E[i, :] .*= InnerMask
     end
     if plotim == true
-        PlotPulse(field)
+        Ir = dropdims(sum(abs.(field.E); dims=1); dims=1)
+        Irdelay = dropdims(sum(abs.(delayfield.E); dims=1); dims=1)
+
+        Imax = max(maximum(Ir), maximum(Irdelay))
+        Irdelay ./= Imax
+        Ir ./= Imax
+
+        ax12.plot(field.grid.r.*1e4, Ir, label = "After Mask is applied")
+        ax12.set_xlabel("r [mm]")
+        ax12.set_ylabel("Normalised electric-field strength")
+        #ax12.set_title("After Mask")
+        ax12.legend()
+
+        ax22.plot(field.grid.r.*1e4, Irdelay, label = "After Mask is applied")
+        ax22.set_xlabel("r [mm]")
+        ax22.set_ylabel("Normalised electric-field strength")
+        #ax22.set_title("After Mask")
+        ax22.legend()
+        
+               
     end
     field.E = propagate(field, f);
+    delayfield.E = propagate(delayfield, f)
+    if plotim == true
+        Ir = dropdims(sum(abs.(field.E); dims=1); dims=1)
+        Irdelay = dropdims(sum(abs.(delayfield.E); dims=1); dims=1)
+
+        Imax = max(maximum(Ir), maximum(Irdelay))
+        Irdelay ./= Imax
+        Ir ./= Imax
+
+        ax13.plot(field.grid.r.*1e4, Ir, label = "In focus")
+        ax13.set_xlabel("r [mm]")
+        ax13.set_ylabel("Normalised electric-field strength")
+        #ax13.set_title("In focus")
+        ax13.legend()
+
+        ax23.plot(field.grid.r.*1e4, Irdelay, label = "In focus")
+        ax23.set_xlabel("r [mm]")
+        ax23.set_ylabel("Normalised electric-field strength")
+        #ax23.set_title("In focus")
+        ax23.legend()
+        plt.tight_layout()
+               
+    end
+    #Ir = dropdims(sum(abs2.(field.E); dims=1); dims=1)
+    #Irdelay = dropdims(sum(abs2.(delayfield.E); dims=1); dims=1)
+    #fraction = abs(sum(Irdelay)/sum(Ir))
+    return delayfield
 end
 
 function PlotPulse(field::Efield; t = 0) 
@@ -259,6 +337,7 @@ struct Scan{}
     rate::Any
     field::Efield
     delayfield::Efield
+    ratio::Number
 end
 """
     CreateScan(λ0, PeakP,  fwhm, w0, f, θ, Grid, Mask, p::Propagator, rate)
@@ -266,12 +345,12 @@ end
 Constructs a `Scan` for running autocorrelation delay scans.
 
 # Arguments
-- `λ0::Float64` : Central wavelength
-- `PeaP::Float64` : Peak power of the pulse.
-- `fwhm::Float64` : Full-width-half-maximum of the pulse.
-- `w0::Float64` : Beam waist.
-- `f::Float64` : f-number of the focusing optics.
-- `Θ::Float64` : Angle under which the beam propagates.
+- `λ0::Number` : Central wavelength
+- `PeaP::Number` : Peak power of the pulse.
+- `fwhm::Number` : Full-width-half-maximum of the pulse.
+- `w0::Number` : Beam waist.
+- `f::Number` : f-number of the focusing optics.
+- `Θ::Number` : Angle under which the beam propagates.
 - `Grid::SpacetimeGrid` : Grid that defines the time and space of interest. Use Grid() to create a grid.
 - `Mask::Array{size Grid[x,y]}` : Mask that will be applied to the beam at position -f.
                                   The mask should have the same size has the x,y space in the Grid. The mask will simply be
@@ -280,13 +359,13 @@ Constructs a `Scan` for running autocorrelation delay scans.
                     (e.g ppt = Ionisation.ionrate_fun!_PPTcached(:He, λ0))
 
 """
- function create_scan(λ0::Float64, PeakP:: Float64, fwhm::Float64, w0::Float64, f::Float64, 
+ function create_scan(λ0::Number, PeakP:: Number, fwhm::Number, w0::Number, f::Number, r::Number,
     ϕ::Array{Float64}, Grid, rate)
     field = create_efield(Grid.r, Grid, w0, λ0, PeakP, fwhm)
     field(ϕ = ϕ)
-    delayfield = create_efield(Grid.r, Grid, w0, λ0, PeakP, fwhm)
+    delayfield = ApplyMask(field, r, f, plotim = true)
     delayfield(ϕ = ϕ)
-    Scan(PeakP, fwhm, f, ϕ, w0, rate, field, delayfield,)
+    Scan(PeakP, fwhm, f, ϕ, w0, rate, field, delayfield, r)
 end
 
 
@@ -315,18 +394,12 @@ Arguments
 If the arguments `zrange` and `zsteps` arent given the scan will be run only in the focus. 
 Likewise if the arguments `mask_in` and `mask_out` aren't given the scan will be run with the full beam as signal and delay.
 """
-function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}, zsteps::Int64, InnerMask::Array{ComplexF64, 1}, OuterMask::Array{ComplexF64, 1}, fpath::String, fname::String)
+function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String)
     start, stop = zrange
     z = collect(range(start, stop, zsteps))
     IonMap = zeros((length(delayset)))
     k = 1
     τsteps = length(delayset)
-    if !isempty(InnerMask)
-        ApplyMask(dscan.delayfield, InnerMask, dscan.f)
-    end
-    if !isempty(OuterMask)
-        ApplyMask(dscan.field, OuterMask, dscan.f)
-    end
     Eori_fund = deepcopy(dscan.field.E)
     Edel_fund = deepcopy(dscan.delayfield.E)
     for i ∈ delayset
@@ -346,7 +419,7 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             dscan.delayfield.E .= deepcopy(Edel_foc)
             dscan.field.E .= deepcopy(Eori_fund)
         end
-        IonMap[k] = sum(abs,IonMapdummy .* (stop-start)/zsteps)
+        IonMap[k] = sum(abs, IonMapdummy .* (stop-start)/zsteps)
         k += 1
     end
     date = Dates.format(now(), "yyyy-mm-dd")
@@ -362,8 +435,8 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
             f["Ionisation_Fraction"] = IonMap
             f["delay"] = delayset 
-            parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "ϕ", "τ", "zrange", "InMask", "OutMask"]
-            parvalues = [dscan.field.E, dscan.field.λ0, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.ϕ, delayset, z, InnerMask, OuterMask]
+            parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "ϕ", "τ", "zrange", "InMask", "OutMask", "Ratio"]
+            parvalues = [dscan.field.E, dscan.field.λ0, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.ϕ, delayset, z, dscan.ratio]
             for (key, values) in zip(parnames, parvalues)
                 g[key] = values 
             end
@@ -372,5 +445,6 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     end
     delayset, IonMap
 end
+
 
 
