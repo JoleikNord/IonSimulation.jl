@@ -11,8 +11,6 @@ using Dates
 import Hankel
 import SpecialFunctions: besselj, gamma, erf
 
-pygui(true)
-
 
 abstract type SpacetimeGrid end
 struct RealGrid <: SpacetimeGrid
@@ -365,7 +363,7 @@ Constructs a `Scan` for running autocorrelation delay scans.
     ϕ::Array{Float64}, Grid, rate)
     field = create_efield(Grid.r, Grid, w0, λ0, PeakP, fwhm)
     field(ϕ = ϕ)
-    delayfield = ApplyMask(field, r, f, plotim = true)
+    delayfield = ApplyMask(field, r, f, plotim = false)
     delayfield(ϕ = ϕ)
     Scan(PeakP, fwhm, f, ϕ, w0, rate, field, delayfield, r)
 end
