@@ -7,14 +7,12 @@ version = "0.1.0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+Hankel = "74863788-d124-456e-a676-9b76578dd39e"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Luna = "30eb0fb0-5147-11e9-3356-d75b018717ce"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-
-[compat]
-
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
