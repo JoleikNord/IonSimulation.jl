@@ -445,3 +445,5 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     end
     delayset, IonMap
 end
+
+dirname(@__FILE__)
