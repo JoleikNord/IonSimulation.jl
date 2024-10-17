@@ -1,3 +1,5 @@
+module IonSimulation
+
 import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields
 import PyPlot: plt, pygui
 import FFTW
@@ -444,4 +446,5 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
         end
     end
     delayset, IonMap
+end
 end
