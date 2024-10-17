@@ -435,7 +435,7 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             #HDF5.create_dataset(f, "Ionisation_Fraction", Float64, 2)
             f["Ionisation_Fraction"] = IonMap
             f["delay"] = delayset 
-            parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "ϕ", "τ", "zrange", "InMask", "OutMask", "Ratio"]
+            parnames = ["Efield", "λ", "PeakP", "fwhm", "w0", "f", "ϕ", "τ", "zrange", "Ratio"]
             parvalues = [dscan.field.E, dscan.field.λ0, dscan.PeakP, dscan.fwhm, dscan.w0, dscan.f, dscan.ϕ, delayset, z, dscan.ratio]
             for (key, values) in zip(parnames, parvalues)
                 g[key] = values 
