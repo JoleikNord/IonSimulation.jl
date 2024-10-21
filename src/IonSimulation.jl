@@ -65,10 +65,11 @@ function create_efield(r::Vector{Float64}, grid::SpacetimeGrid, w0, λ0, P, fwhm
     I = 2 * P / (π * w0^2)
     A0 = Tools.intensity_to_field(I) 
     E = zeros(ComplexF64, (size(grid.t)[1], grid.Nr))
+    fwhm_I = 1.665*fwhm/2.355 # From field to power
     for (ridx, ri) in enumerate(r)
         for (tidx, ti) in enumerate(grid.t)
             gausbeam =  exp(-(ri^2) / w0^2) #* exp(1im  * (ω0 / PhysData.c))
-            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm) * exp(1im * ω0 .* ti) # fix FWHM duration from field to power
+            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm_I) * exp(1im * ω0 .* ti) # fix FWHM duration from field to power
             E[tidx, ridx] = @. A0 * gauspulse * gausbeam 
             
         end
