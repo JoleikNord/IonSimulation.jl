@@ -361,10 +361,10 @@ Constructs a `Scan` for running autocorrelation delay scans.
 
 """
  function create_scan(λ0::Number, PeakP:: Number, fwhm::Number, w0::Number, f::Number, r::Number,
-    ϕ::Array{Float64}, Grid, rate)
+    ϕ::Array{Float64}, Grid, rate; plotim = false)
     field = create_efield(Grid.r, Grid, w0, λ0, PeakP, fwhm)
     field(ϕ = ϕ)
-    delayfield = ApplyMask(field, r, f, plotim = false)
+    delayfield = ApplyMask(field, r, f, plotim = plotim)
     delayfield(ϕ = ϕ)
     Scan(PeakP, fwhm, f, ϕ, w0, rate, field, delayfield, r)
 end
