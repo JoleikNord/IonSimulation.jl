@@ -1,4 +1,4 @@
-module IonSimulation
+#module IonSimulation
 
 import Luna: PhysData, Maths, Ionisation, Tools, Logging, Fields
 import PyPlot: plt, pygui
@@ -69,7 +69,7 @@ function create_efield(r::Vector{Float64}, grid::SpacetimeGrid, w0, λ0, P, fwhm
     for (ridx, ri) in enumerate(r)
         for (tidx, ti) in enumerate(grid.t)
             gausbeam =  exp(-(ri^2) / w0^2) #* exp(1im  * (ω0 / PhysData.c))
-            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm_I) * exp(1im * ω0 .* ti) # fix FWHM duration from field to power
+            gauspulse =  @. Maths.gauss(ti; fwhm = fwhm_I) * exp(1im * ω0 .* ti) 
             E[tidx, ridx] = @. A0 * gauspulse * gausbeam 
             
         end
@@ -124,7 +124,7 @@ function propagate(field::Efield, z::Number)
 end
 
 
-##
+
 
 ############### Ionisation calculation #######################
 """
@@ -160,7 +160,7 @@ Creates a mask that can be applyed to block part of a beam.
 - `OuterRadius::Float64` : Outer radius of the mask in m. 
 - `InnerRadius::Float64` : Inner radius of the mask in m.
 """
-function MakeMask(r::Array{Float64}, OutR::Float64, InR::Float64; plotim = false)
+function MakeMask(r::Array{Float64}, OutR::Float64, InR::Float64; plotim = false, taper_strength = 10)    
     Mask = zeros(ComplexF64, length(r))
     for (ridx, ri) in enumerate(r)
         if ri <= OutR &&
@@ -168,6 +168,33 @@ function MakeMask(r::Array{Float64}, OutR::Float64, InR::Float64; plotim = false
                 Mask[ridx] = 1  
         end
     end
+    ## find transition positions
+    deltamask = [real(Mask[x+1])-real(Mask[x]) for x in 1:length(Mask)-1] 
+    extrema_counter = count(x -> x==1.0 || x==-1.0, deltamask)
+    δr = r[2]-r[1]
+    k = taper_strength
+    if extrema_counter == 1
+        if  count(x -> x==1.0, deltamask) == 1 # A Mask that is 1 from the start and falls down to 0 at OutR distance (InR = 0.0)
+            transition_point = argmax(deltamask)
+            right0, right1 = r[transition_point] - k*δr, r[transition_point] + k*δr
+            left0, left1 = 0.0, 0.0
+            Mask = Maths.planck_taper(r, left0, left1, right0, right1)
+        else # A Mask that is 0 from r = 0 to InR and from their to r[end] is 1 (OutR = Inf)
+            transition_point = argmin(deltamask)
+            right0, right1 = r[end], r[end]
+            left0, left1 = r[transition_point] - k*δr, r[transition_point] + k*δr
+            Mask = Maths.planck_taper(r, left0, left1, right0, right1)
+        end
+    elseif extrema_counter == 2 # A Mask that is 0 from the start till InR, than continues to be 1 till OutR after which it is 0 again till the end of the grid.
+        left_transition_point = argmax(deltamask)
+        right_transition_point = argmin(deltamask)
+        left0, left1 = r[left_transition_point] - k*δr, r[left_transition_point] + k*δr
+        right0, right1 = r[right_transition_point] - k*δr, r[right_transition_point] + k*δr
+        Mask = Maths.planck_taper(r, left0, left1, right0, right1)
+    else # A Mask with "wrong" numbers that are outside of the grid
+        error("Given Mask Boundries are outside of the grid range!")
+    end
+    
     if plotim
         plt.figure()
         plt.plot(r*1e3, abs2.(Mask))
@@ -446,4 +473,9 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     end
     delayset, IonMap
 end
-end
+#end
+
+##
+
+
+
