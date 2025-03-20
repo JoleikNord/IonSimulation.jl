@@ -532,6 +532,7 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
     delayset, IonMap
 end
 
+
 function create_new_grid(field::Efield; R = nothing, m= nothing, δt= nothing, Nt= nothing)
     if m !== nothing
         Nr = 2^m
