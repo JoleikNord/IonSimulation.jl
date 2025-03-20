@@ -528,8 +528,8 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             end
             
         end
+        delayset, IonMap
     end
-    delayset, IonMap
 end
 
 
