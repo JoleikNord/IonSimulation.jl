@@ -483,6 +483,7 @@ function (dscan::Scan)(New_R::Float64, new_m::Int64, delayset::Array{Float64}, z
     IonMap = zeros((length(delayset)))
     k = 1
     τsteps = length(delayset)
+    zsteps = length(zset)
     create_new_grid(dscan.field, R = New_R, m = new_m)
     create_new_grid(dscan.delayfield, R = New_R, m = new_m)
     Eori_fund = deepcopy(dscan.field.E)
@@ -531,7 +532,6 @@ function (dscan::Scan)(New_R::Float64, new_m::Int64, delayset::Array{Float64}, z
     end
     delayset, IonMap
 end
-print("...")
 
 function create_new_grid(field::Efield; R = nothing, m= nothing, δt= nothing, Nt= nothing)
     if m !== nothing
