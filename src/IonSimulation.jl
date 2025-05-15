@@ -478,9 +478,8 @@ Arguments
 If the arguments `zrange` and `zsteps` arent given the scan will be run only in the focus. 
 Likewise if the arguments `mask_in` and `mask_out` aren't given the scan will be run with the full beam as signal and delay.
 """
-function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}, zsteps::Int64, fpath::String, fname::String)
-    start, stop = zrange
-    z = collect(range(start, stop, zsteps))
+function (dscan::Scan)(New_R::Float64, new_m::Int64, delayset::Array{Float64}, zset::Array{Float64}, fpath::String, fname::String)
+    z = zset
     IonMap = zeros((length(delayset)))
     k = 1
     τsteps = length(delayset)
@@ -528,10 +527,11 @@ function (dscan::Scan)(delayset::Array{Float64}, zrange::Tuple{Float64, Float64}
             end
             
         end
-        delayset, IonMap
+        
     end
+    delayset, IonMap
 end
-
+print("...")
 
 function create_new_grid(field::Efield; R = nothing, m= nothing, δt= nothing, Nt= nothing)
     if m !== nothing
