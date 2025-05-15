@@ -331,7 +331,7 @@ function ApplyMask(fund_field::Efield,  b, f; taper_strength = 10, plotim = fals
     #Ir = dropdims(sum(abs2.(field.E); dims=1); dims=1)
     #Irdelay = dropdims(sum(abs2.(delayfield.E); dims=1); dims=1)
     #fraction = abs(sum(Irdelay)/sum(Ir))
-    return field, delayfield
+    return delayfield, field
 end
 
 function PlotPulse(field::Efield; t = 0) 
